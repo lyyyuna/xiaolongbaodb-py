@@ -1,3 +1,5 @@
+import os
+
 class LRUCache(dict):
     def __init__(self, *args, **kwargs):
         '''
@@ -44,3 +46,19 @@ class LRUCache(dict):
         
         del self.lru[:]
 
+
+def open_database_file(filename, suffix='.xdb'):
+    '''
+    Open a file in binary mode, if not exist then create it
+    '''
+    if os.path.exist(filename):
+        '''
+        buffering is an optional integer used to set the buffering policy. Pass 0 to switch buffering off (only allowed in binary mode), 1 to select line buffering (only usable in text mode), and an integer > 1 to indicate the size in bytes of a fixed-size chunk buffer. When no buffering argument is given, the default buffering policy works as follows:
+
+        Binary files are buffered in fixed-size chunks; the size of the buffer is chosen using a heuristic trying to determine the underlying device’s “block size” and falling back on io.DEFAULT_BUFFER_SIZE. On many systems, the buffer will typically be 4096 or 8192 bytes long.
+        '''
+        f = open(filename+suffix, 'rb+', buffering=0)
+    else:
+        fd = os.open(filename+suffix, os.O_RDWR | os.O_CREAT)
+        f= os.fdopen(fd, 'rb+')
+    return f
