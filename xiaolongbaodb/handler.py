@@ -1,5 +1,6 @@
 import io
 import logging
+import enum
 import threading
 from xiaolongbaodb import constants, util
 
@@ -23,12 +24,21 @@ class FileHandler():
         # get the last available page
 
 
+class FrameType(enum.Enum):
+    PAGE = 1
+    COMMIT = 2
+    ROLLBACK = 3
+
+
 class WAL():
     '''
     Handler of write-ahead logging technique. WAL used to add a protective layer for data when some
     emergency happens during transaction. WAL provides an measurement to recover the lost data 
     next time user open the same database.
     '''
+
+    FRAME_HEADER_LENGTH = constants.FRAME_TYPE_LENGTH_LIMIT + constants.PAGE_ADDRESS_LIMIT
+
     def __init__(self, filename: str, page_size: int) -> None:
         self._filename = filename
         self._fd = util.open_database_file(filename=filename, suffix='.xdb.wal')
@@ -53,4 +63,42 @@ class WAL():
         util.write_to_file(self._fd, data, True)
 
     def _load_wal(self):
-        pass
+        '''
+        load previous WAL generated when B Tree closed accidentally.
+        '''
+        self._fd.seek(0)
+        header_data = util.read_from_file(self, 0, constants.PAGE_LENGTH_LIMIT)
+        assert int.from_bytes(header_data, constants.ENDIAN) == self._page_size
+
+        while True:
+            try:
+                self._load_next_frame()
+            except util.EndOfFileError:
+                break
+        if self._uncommited_pages:
+            logger.warning('WAL has uncommited data, discarding it')
+            self._uncommited_pages = dict()
+
+    def _load_next_frame(self):
+        start = self._fd.tell()
+        end = start + self.FRAME_HEADER_LENGTH
+        data = util.read_from_file(self._fd, start, end)
+
+        frame_type = int.from_bytes(data[0:constants.FRAME_TYPE_LENGTH_LIMIT], constants.ENDIAN)
+        frame_type = FrameType(frame_type)
+        if frame_type is FrameType.PAGE:
+            self._fd.seek(end + self._page_size)
+
+        page = int.from_bytes(data[constants.FRAME_TYPE_LENGTH_LIMIT:constants.FRAME_TYPE_LENGTH_LIMIT+constants.PAGE_ADDRESS_LIMIT])
+        self._index_frame(frame_type, page, end)
+
+    def _index_frame(self, frame_type: FrameType, page: int, page_start: int):
+        if frame_type is FrameType.PAGE:
+            self._uncommited_pages[page] = page_start
+        elif frame_type is FrameType.COMMIT:
+            self._commited_pages.update(self._uncommited_pages)
+            self._uncommited_pages = dict()
+        elif frame_type is FrameType.ROLLBACK:
+            self._uncommited_pages = dict()
+        else:
+            assert False

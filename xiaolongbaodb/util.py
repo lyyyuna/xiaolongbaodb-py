@@ -78,3 +78,22 @@ def file_flush_and_sync(f: io.FileIO):
     # If you’re starting with a buffered Python file object f, first do f.flush(), and then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
     f.flush()
     os.fsync(f.fileno())
+
+
+class EndOfFileError(Exception):
+    pass
+
+
+def read_from_file(file_fd: io.FileIO, start: int, end: int) -> bytes:
+    length = end - start
+    assert length >= 0
+    file_fd.seek(start)
+    data = bytes()
+    while file_fd.tell() < end:
+        # The read() (when called with a positive argument), readinto() and write() methods on this class will only make one system call.
+        read_data = file_fd.read(end - file_fd.tell())
+        if read_data == b'':
+            raise EndOfFileError('read until the end of file_fd')
+        data += read_data
+    assert len(data) == length
+    return data
