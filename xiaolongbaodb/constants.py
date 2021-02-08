@@ -9,4 +9,8 @@ TreeConf = namedtuple('TreeConf', [
     'value_size',
 ])
 
+# network (big-edian)
+ENDIAN = 'big'
 
+# bytes for storing length of each page
+PAGE_LENGTH_LIMIT = 3

@@ -1,3 +1,4 @@
+import io
 import os
 
 class LRUCache(dict):
@@ -62,3 +63,18 @@ def open_database_file(filename, suffix='.xdb'):
         fd = os.open(filename+suffix, os.O_RDWR | os.O_CREAT)
         f= os.fdopen(fd, 'rb+')
     return f
+
+
+def write_to_file(file_id: io.FileIO, data: bytes, f_sync: bool = False):
+    length_to_write = len(data)
+    written = 0
+    while written < length_to_write:
+        wirtten = file_id.write(data[written:])
+    if f_sync:
+        file_flush_and_sync(file_id)
+
+
+def file_flush_and_sync(f: io.FileIO):
+    # If you’re starting with a buffered Python file object f, first do f.flush(), and then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    f.flush()
+    os.fsync(f.fileno())

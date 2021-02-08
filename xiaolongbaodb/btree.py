@@ -1,5 +1,6 @@
 import logging
 from xiaolongbaodb.constants import *
+from xiaolongbaodb.handler import FileHandler
 
 logger = logging.getLogger(DEFAULT_LOGGER_NAME)
 
