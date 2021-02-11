@@ -1,6 +1,7 @@
 import io
 import logging
 import enum
+import os
 import threading
 from xiaolongbaodb import constants, util
 
@@ -22,7 +23,38 @@ class FileHandler():
         self._wal = WAL(filename, tree_conf.page_size)
 
         # get the last available page
+        self._fd.seek(0, io.SEEK_END)
+        last_byte = self._fd.tell()
+        self.last_page = int(last_byte / self._tree_conf.page_size)
+        self._auto_commit = True
 
+    @property
+    def write_transaction(self):
+        class WriteTransaction:
+            def __enter__(_self):
+                self._lock.acquire()
+
+            def __exit__(_self, exc_type, exc_val, exc_tb):
+                if exc_type:
+                    self._wal.rollback()
+                    self._cache.clear()
+                else:
+                    if self._auto_commit:
+                        self._wal.commit()
+                self._lock.release()
+
+        return WriteTransaction()
+
+    @property
+    def read_transaction(self):
+        class ReadTransaction:
+            def __enter__(_self):
+                self._lock.acquire()
+
+            def __exit__(_self):
+                self._lock.release()
+
+        return ReadTransaction()
 
 class FrameType(enum.Enum):
     PAGE = 1
@@ -102,3 +134,71 @@ class WAL():
             self._uncommited_pages = dict()
         else:
             assert False
+
+    def _add_frame(self, frame_type: FrameType, page: int = None, page_data: bytes = None):
+        if frame_type is FrameType.PAGE and (not page or not page_data):
+            raise ValueError('page frame without page or page data')
+        if page_data and len(page_data) != self._page_size:
+            raise ValueError('page data is different from the page size')
+        if not page:
+            page = 0
+        if frame_type is not FrameType.PAGE:
+            page_data = b''
+        data = (
+            frame_type.value.to_bytes(constants.FRAME_TYPE_LENGTH_LIMIT, constants.ENDIAN) + 
+            page.to_bytes(constants.PAGE_ADDRESS_LIMIT, constants.ENDIAN) +
+            page_data
+        )
+
+        if page in self._commited_pages.keys() and frame_type == FrameType.PAGE:
+            # if this page has wrote into WAL before, overwrite it, or the size of .wal file will boom.
+            page_start = self._commited_pages[page]
+            seek_start = page_start - constants.FRAME_TYPE_LENGTH_LIMIT - constants.PAGE_ADDRESS_LIMIT
+            self._fd.seek(seek_start)
+        else:
+            self._fd.seek(0, io.SEEK_END)
+        util.write_to_file(self._fd, data, f_sync=frame_type != FrameType.PAGE)
+        self._index_frame(frame_type, page, self._fd.tell() - self._page_size)
+
+    def set_page(self, page: int, page_data: bytes):
+        self._add_frame(FrameType.PAGE, page, page_data)
+
+    def commit(self):
+        '''
+        commit is no-op when there is no uncommitted pages.
+        '''
+        if self._uncommited_pages:
+            self._add_frame(FrameType.COMMIT)
+
+    def rollback(self):
+        if self._uncommited_pages:
+            self._add_frame(FrameType.ROLLBACK)
+
+    def get_page(self, page: int) -> bytes:
+        page_start = None
+        for store in (self._uncommited_pages, self._commited_pages):
+            page_start = store.get(page)
+            if page_start:
+                break
+        
+        if not page_start:
+            return b''
+
+
+        return util.read_from_file(self._fd, page_start, page_start + self._page_size)
+
+    def checkpoint(self):
+        '''
+        transfer the modified data back to the test_tree and close the WAL
+        '''
+        if self._uncommited_pages:
+            logger.warning('close WAL with uncommited data, discarding it')
+
+        util.file_flush_and_sync(self._fd)
+
+        for page, page_start in self._commited_pages.items():
+            page_data = util.read_from_file(self._fd, page_start, page_start + self._page_size)
+            yield page, page_data
+
+        self._fd.close()
+        os.unlink(self._filename + '.xdb.wal')
