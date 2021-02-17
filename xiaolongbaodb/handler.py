@@ -3,7 +3,8 @@ import logging
 import enum
 import os
 import threading
-from xiaolongbaodb import constants, util
+from xiaolongbaodb.node import BNode, BaseBNode
+from xiaolongbaodb import constants, util, btree
 
 logger = logging.getLogger(constants.DEFAULT_LOGGER_NAME)
 
@@ -27,6 +28,17 @@ class FileHandler():
         last_byte = self._fd.tell()
         self.last_page = int(last_byte / self._tree_conf.page_size)
         self._auto_commit = True
+        self._page_GC = list(self._load_page_gc())
+
+    def _load_page_gc(self):
+        '''
+        load all deprecated page used before into the memory
+        '''
+        for offset in range(1, self.last_page):
+            page_start = offset * self._tree_conf.page_size
+            page_type = util.read_from_file(self._fd, page_start, constants.NODE_TYPE_LENGTH_LIMIT)
+            if page_type == 2: # _PageType.DEPRECATED_PAGE._value==2
+                yield offset
 
     @property
     def write_transaction(self):
@@ -55,6 +67,119 @@ class FileHandler():
                 self._lock.release()
 
         return ReadTransaction()
+
+    def _fd_seek_end(self):
+        self._fd.seek()
+
+    def _read_page_data(self, page: int) -> bytes:
+        '''
+        read no.x page raw binary data from the db file 
+        '''
+        page_start = page * self._tree_conf.page_size
+        data = util.read_from_file(self._fd, page_start, page_start + self._tree_conf.page_size)
+        return data
+
+    def _write_page_data(self, page: int, page_data: bytes, f_sync: bool = False):
+        '''
+        write no.x page raw binary data into the db file
+        '''
+        assert len(page_data) == self._tree_conf.page_size, 'length of the page size does not match the page_data'
+
+        page_start = page * self._tree_conf.page_size
+        self._fd.seek(page_start)
+        util.write_to_file(self._fd, page_data, f_sync=f_sync)
+
+    def get_meta_tree_conf(self) -> tuple:
+        '''
+        read former recorded tree conf from the db file, as first page data
+        '''
+        try:
+            data = self._read_page_data(0)
+        except util.EndOfFileError:
+            raise ValueError('meta tree data not complete')
+        root_page = int.from_bytes(data[0:constants.PAGE_ADDRESS_LIMIT], constants.ENDIAN)
+        order_end = constants.PAGE_ADDRESS_LIMIT + 1
+        order = int.from_bytes(data[constants.PAGE_ADDRESS_LIMIT:order_end], constants.ENDIAN)
+        page_size_end = order_end + constants.PAGE_LENGTH_LIMIT
+        page_size = int.from_bytes(data[order_end:page_size_end], constants.ENDIAN)
+        key_size_end = page_size_end + constants.KEY_LENGTH_LIMIT
+        key_size = int.from_bytes(data[page_size_end:key_size_end], constants.ENDIAN)
+        value_size_end = key_size_end + constants.VALUE_LENGTH_LIMIT
+        value_size = int.from_bytes(data[key_size_end:value_size_end], constants.ENDIAN)
+
+        if order != self._tree_conf.order:
+            order = self._tree_conf.order
+        self._tree_conf = constants.TreeConf(order, page_size, key_size, value_size)
+
+        return root_page, self._tree_conf
+
+    def get_node(self, page: int, tree: btree.BTree):
+        '''
+        try to get node from the cache to avoid extra i/o,
+        if not exist, get and load from the db file
+        '''
+        node = self._cache.get(page)
+        if node:
+            return node
+
+        data = self._wal.get_page(page)
+        if not data:
+            data = self._read_page_data(page)
+        
+        node = BaseBNode.from_raw_data(tree, self._tree_conf, page, data)
+        self._cache[page] = node
+        return node
+
+    def set_node(self, node: BNode):
+        '''
+        add & update node dumped data into the db file and also update the cache 
+        '''
+        self._wal.set_page(node.page, node.dump())
+        self._cache[node.page] = node
+
+    def ensure_root_block(self, root: BNode):
+        '''
+        sync current root node info with both memory and disk
+        '''
+        self.set_node(root)
+        self.set_meta_tree_conf(root.page, root.tree_conf)
+        self.commit()
+
+    def set_meta_tree_conf(self, page: int, tree_conf: constants.TreeConf):
+        '''
+        set current tree conf into the db file, record in the first page,
+        file-sync is necessary.
+        '''
+        self._tree_conf = tree_conf
+        length = constants.PAGE_ADDRESS_LIMIT + 1 + constants.PAGE_LENGTH_LIMIT + constants.KEY_LENGTH_LIMIT + constants.VALUE_LENGTH_LIMIT
+        data = (
+            page.to_bytes(constants.PAGE_ADDRESS_LIMIT, constants.ENDIAN) +
+            self._tree_conf.order.to_bytes(1, constants.ENDIAN) + 
+            self._tree_conf.page_size.to_bytes(constants.PAGE_LENGTH_LIMIT, constants.ENDIAN) + 
+            self._tree_conf.key_size.to_bytes(constants.KEY_LENGTH_LIMIT, constants.ENDIAN) +
+            self._tree_conf.value_size.to_bytes(constants.VALUE_LENGTH_LIMIT, constants.ENDIAN) +
+            bytes(self._tree_conf.page_size - length) # padding
+        )
+        self._write_page_data(0, data, f_sync=True)
+
+    def _takeout_deprecated_page(self) -> int:
+        '''
+        if GC still has pages, take the smallest one
+        '''
+        if self._page_GC:
+            return self._page_GC.pop(0)
+        return None
+
+    @property
+    def next_available_page(self) -> int:
+        # try to get one page from the GC first, else get one by increase last_page
+        dep_page = self._takeout_deprecated_page()
+        if dep_page:
+            return dep_page
+        else:
+            self.last_page += 1
+            return self.last_page
+
 
 class FrameType(enum.Enum):
     PAGE = 1

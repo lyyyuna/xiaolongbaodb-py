@@ -22,6 +22,8 @@ class LRUCache(dict):
         item = super().get(key, default)
         self.refresh(key)
 
+        return item
+
     def __getitem__(self, key):
         item = super().__getitem__(key)
         self.refresh(key)
@@ -48,7 +50,7 @@ class LRUCache(dict):
         del self.lru[:]
 
 
-def open_database_file(filename, suffix='.xdb'):
+def open_database_file(filename, suffix='.xdb') -> io.FileIO:
     '''
     Open a file in binary mode, if not exist then create it
     '''
