@@ -1,7 +1,19 @@
+import functools
 from abc import ABCMeta, abstractmethod
 from xiaolongbaodb import constants
 from xiaolongbaodb.constants import TreeConf
 from xiaolongbaodb.btree import BTree
+
+@functools.total_ordering
+class KeyValPair(metaclass=ABCMeta):
+    '''
+    unit to store a paire of key-value, switch its serializer automatically by its type
+    '''
+    def __init__(self, tree_conf: TreeConf, key=None, value=None, data: bytes=None):
+        self.tree_conf = tree_conf
+        self._key = key
+        self._val = value
+
 
 class BaseBNode(metaclass=ABCMeta):
     PAGE_TYPE = None
@@ -35,6 +47,7 @@ class BNode(BaseBNode):
         self.tree = tree
         self.tree_conf = tree_conf
         self.page = self.tree.next_available_page
+        self.contents = []
 
     def dump(self) -> bytes:
         pass

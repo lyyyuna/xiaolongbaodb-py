@@ -1,4 +1,5 @@
 import logging
+import bisect
 from xiaolongbaodb.constants import *
 from xiaolongbaodb.handler import FileHandler
 from xiaolongbaodb.node import BNode
@@ -44,4 +45,7 @@ class BTree():
             ancestry = []
 
             while getattr(current_node, 'children', None):
-                pass
+                index = bisect.bisect_left(current_node.contents, key)
+                ancestry.append((current_node, index))
+                # cannot be last elem
+                if index < len(current_node.contents) and current_node.contents[index].
