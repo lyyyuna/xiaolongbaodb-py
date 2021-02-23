@@ -170,6 +170,17 @@ class FileHandler():
             return self._page_GC.pop(0)
         return None
 
+    def set_deprecated_data(self, dep_page: int, dep_page_data: bytes):
+        '''
+        set page as deprecated in the db file
+        '''
+        if dep_page in self._cache:
+            del self._cache[dep_page]
+        # when auto_commit is closed, wal won't record uncommitted pages
+        # so deprecated pages only maintain in the memory
+        if self._auto_commit:
+            self._wal.set_page_depcrecated(dep_page, dep_page_data)
+
     @property
     def next_available_page(self) -> int:
         # try to get one page from the GC first, else get one by increase last_page
@@ -327,3 +338,11 @@ class WAL():
 
         self._fd.close()
         os.unlink(self._filename + '.xdb.wal')
+
+    def set_page_depcrecated(self, dep_page: int, dep_page_data: bytes):
+        assert dep_page in self._commited_pages.keys(), 'page to be set as depcrecated not found'
+        dep_page_start = self._commited_pages[dep_page]
+        dep_page_seek_start = dep_page_start - constants.FRAME_TYPE_LENGTH_LIMIT - constants.PAGE_ADDRESS_LIMIT
+        self._fd.seek(dep_page_seek_start)
+        util.write_to_file(self._fd, dep_page_data)
+        del self._commited_pages[dep_page]

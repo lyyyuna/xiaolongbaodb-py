@@ -33,3 +33,15 @@ class BTree():
         used for upper layer
         '''
         return self.handler.next_available_page
+
+    def _path_to(self, key) -> list:
+        '''
+        get the path from the root to the target node
+        :return: list of node-path from root to key node
+        '''
+        with self.handler.read_transaction:
+            current_node = self._root
+            ancestry = []
+
+            while getattr(current_node, 'children', None):
+                pass
