@@ -1,7 +1,7 @@
 import functools
 from abc import ABCMeta, abstractmethod
 from xiaolongbaodb import constants
-from xiaolongbaodb.constants import TreeConf
+from xiaolongbaodb.constants import KEY_LENGTH_LIMIT, SERIALIZER_TYPE_LENGTH_LIMIT, TreeConf, VALUE_LENGTH_LIMIT
 from xiaolongbaodb.btree import BTree
 
 @functools.total_ordering
@@ -13,6 +13,10 @@ class KeyValPair(metaclass=ABCMeta):
         self.tree_conf = tree_conf
         self._key = key
         self._val = value
+        self.length = (KEY_LENGTH_LIMIT + self.tree_conf.key_size + VALUE_LENGTH_LIMIT + self.tree_conf.value_size + 2 * SERIALIZER_TYPE_LENGTH_LIMIT)
+
+        if self._key is not None and self._val is not None:
+            self.key_ser = 1
 
 
 class BaseBNode(metaclass=ABCMeta):

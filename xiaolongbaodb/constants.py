@@ -26,3 +26,9 @@ NODE_TYPE_LENGTH_LIMIT = 1
 
 # bytes for storing per frame used in WAL module
 FRAME_TYPE_LENGTH_LIMIT = 1
+
+# bytes for storing serializer type
+SERIALIZER_TYPE_LENGTH_LIMIT = 1
+
+INT_FORMAT = '!l'
+FLOAT_FORMAT = '!f'
